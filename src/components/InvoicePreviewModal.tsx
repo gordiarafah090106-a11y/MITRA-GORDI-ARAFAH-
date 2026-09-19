@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Loader2,
   Phone,
+  Trash2,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { useApp } from '../context/AppContext';
@@ -25,16 +26,21 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
   onClose,
   invoice,
 }) => {
-  const { profile, markInvoiceLunas } = useApp();
+  const { profile, markInvoiceLunas, deleteInvoice } = useApp();
   const printRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [shareStatusMsg, setShareStatusMsg] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState<'Belum' | 'Lunas'>(invoice?.status || 'Belum');
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteRelatedTx, setDeleteRelatedTx] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   React.useEffect(() => {
     if (invoice) {
       setCurrentStatus(invoice.status);
+      setShowDeleteConfirm(false);
     }
   }, [invoice]);
 
@@ -45,6 +51,23 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
   const handleMarkLunas = async () => {
     setCurrentStatus('Lunas');
     await markInvoiceLunas(invoice.id);
+  };
+
+  const handleDeleteInvoice = async () => {
+    setIsDeleting(true);
+    try {
+      await deleteInvoice(invoice.id, {
+        nomorInvoice: invoice.nomorInvoice,
+        customerName: invoice.customer,
+        deleteRelatedTransactions: deleteRelatedTx,
+      });
+      setShowDeleteConfirm(false);
+      onClose();
+    } catch (err) {
+      console.error('Error deleting invoice from modal:', err);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleDownloadImage = async () => {
@@ -170,6 +193,16 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
             </button>
 
             <button
+              id="btn-preview-delete-modal"
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 font-bold text-xs border border-rose-500/30 cursor-pointer"
+              title="Hapus Invoice"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Hapus</span>
+            </button>
+
+            <button
               onClick={onClose}
               className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
             >
@@ -177,6 +210,49 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Konfirmasi Hapus Invoice di dalam Modal */}
+        {showDeleteConfirm && (
+          <div className="p-3.5 bg-rose-950/40 border-b border-rose-500/30 space-y-2.5 animate-fade-in text-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-rose-300 font-bold">
+                <Trash2 className="w-4 h-4 text-rose-400" />
+                <span>Konfirmasi Hapus Invoice {invoice.nomorInvoice}?</span>
+              </div>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="text-slate-400 hover:text-white text-xs"
+              >
+                Batal
+              </button>
+            </div>
+            <label className="flex items-start gap-2 text-[11px] text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={deleteRelatedTx}
+                onChange={(e) => setDeleteRelatedTx(e.target.checked)}
+                className="mt-0.5 rounded border-slate-700 text-rose-500 bg-slate-900 cursor-pointer"
+              />
+              <span>Hapus juga transaksi tagihan pelanggan ini di menu Belum Bayar</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-3 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 font-medium"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleDeleteInvoice}
+                disabled={isDeleting}
+                className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold disabled:opacity-50 flex items-center gap-1 shadow"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>{isDeleting ? 'Menghapus...' : 'Ya, Hapus'}</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Invoice Printable Viewport (Dark Theme matching Image 2) */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-[#050811]">

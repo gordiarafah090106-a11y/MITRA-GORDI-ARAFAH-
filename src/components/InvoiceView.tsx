@@ -5,6 +5,10 @@ import {
   Plus,
   User,
   Eye,
+  Trash2,
+  AlertTriangle,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Invoice, Transaction } from '../types';
@@ -33,10 +37,16 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
   onOpenCreateInvoice,
   onPreviewInvoice,
 }) => {
-  const { invoices, transactions, contacts } = useApp();
+  const { invoices, transactions, contacts, deleteInvoice, deletedInvoiceKeys } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+
+  // State untuk aksi delete invoice
+  const [invoiceToDelete, setInvoiceToDelete] = useState<SyncedInvoiceItem | null>(null);
+  const [deleteRelatedTx, setDeleteRelatedTx] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
 
   // Transaksi yang berstatus Belum Bayar (sumber kebenaran dari fitur BELUM BAYAR)
   const unpaidTransactions = useMemo(() => {
@@ -45,6 +55,15 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
 
   // Sinkronisasi otomatis semua nama yang berhutang dengan data Belum Bayar
   const syncedInvoices = useMemo(() => {
+    const isItemDeleted = (item: { id: string; nomorInvoice?: string; customer: string }) => {
+      const custKey = `cust_${item.customer.trim().toUpperCase()}`;
+      return (
+        deletedInvoiceKeys.includes(item.id) ||
+        (!!item.nomorInvoice && deletedInvoiceKeys.includes(item.nomorInvoice)) ||
+        deletedInvoiceKeys.includes(custKey)
+      );
+    };
+
     const debtorMap = new Map<
       string,
       {
@@ -80,10 +99,22 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
 
     // Tambahkan setiap pelanggan yang berhutang sebagai baris invoice
     debtorMap.forEach((debtor) => {
+      // Periksa apakah invoice/pelanggan ini telah dihapus oleh pengguna
+      if (
+        deletedInvoiceKeys.includes(`cust_${debtor.customer}`) ||
+        deletedInvoiceKeys.includes(`synced_inv_${debtor.customer}`)
+      ) {
+        return;
+      }
+
       // Cari invoice yang cocok jika ada di state invoices
       const existingInv = invoices.find(
         (i) => i.customer.trim().toUpperCase() === debtor.customer
       );
+
+      if (existingInv && isItemDeleted(existingInv)) {
+        return;
+      }
 
       // Cari kontak WA jika tersedia
       const contact = contacts.find(
@@ -97,6 +128,10 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
       const invNumber =
         existingInv?.nomorInvoice ||
         `INV-092026-${String(seq).padStart(3, '0')}`;
+
+      if (deletedInvoiceKeys.includes(invNumber)) {
+        return;
+      }
 
       result.push({
         id: existingInv?.id || `synced_inv_${debtor.customer}`,
@@ -117,6 +152,8 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
     // Tambahkan invoice manual berstatus Belum jika belum ada di daftar
     invoices.forEach((inv) => {
       if (inv.status === 'Belum') {
+        if (isItemDeleted(inv)) return;
+
         const alreadyIn = result.some(
           (r) => r.customer.trim().toUpperCase() === inv.customer.trim().toUpperCase()
         );
@@ -140,6 +177,8 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
     // Tambahkan invoice berstatus Lunas untuk kelengkapan riwayat (jika ada)
     invoices.forEach((inv) => {
       if (inv.status === 'Lunas') {
+        if (isItemDeleted(inv)) return;
+
         const alreadyIn = result.some(
           (r) =>
             r.customer.trim().toUpperCase() === inv.customer.trim().toUpperCase() &&
@@ -163,7 +202,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
     });
 
     return result;
-  }, [unpaidTransactions, invoices, contacts]);
+  }, [unpaidTransactions, invoices, contacts, deletedInvoiceKeys]);
 
   // Total Tagihan dari semua invoice yang belum lunas
   const totalTagihanBelumBayar = useMemo(() => {
@@ -246,8 +285,39 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
     onPreviewInvoice(finalInvoice);
   };
 
+  const handleConfirmDelete = async () => {
+    if (!invoiceToDelete) return;
+    setIsDeleting(true);
+    try {
+      const rawTxIds = invoiceToDelete.rawTransactions?.map((t) => t.id) || [];
+      await deleteInvoice(invoiceToDelete.id, {
+        nomorInvoice: invoiceToDelete.nomorInvoice,
+        customerName: invoiceToDelete.customer,
+        deleteRelatedTransactions: deleteRelatedTx,
+        rawTxIds,
+      });
+
+      const deletedNumber = invoiceToDelete.nomorInvoice;
+      setDeleteSuccessMsg(`Invoice ${deletedNumber} berhasil dihapus.`);
+      setInvoiceToDelete(null);
+      setTimeout(() => setDeleteSuccessMsg(null), 3000);
+    } catch (err) {
+      console.error('Error deleting invoice:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 pb-20 font-sans">
+      {/* Toast Notifikasi Berhasil Hapus */}
+      {deleteSuccessMsg && (
+        <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-fade-in shadow-lg">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{deleteSuccessMsg}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -306,7 +376,7 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
                 <th className="py-3.5 px-4">Rincian Tagihan</th>
                 <th className="py-3.5 px-4 text-right">Total Tagihan</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
-                <th className="py-3.5 px-4 text-center w-28">Lihat Hasil</th>
+                <th className="py-3.5 px-4 text-center w-36">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -377,14 +447,29 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          id={`btn-view-invoice-${inv.id}`}
-                          onClick={() => handleOpenPreview(inv)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#181D38] hover:bg-[#222A50] border border-[#434D85] text-[#9EA7FC] hover:text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Hasil</span>
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            id={`btn-view-invoice-${inv.id}`}
+                            onClick={() => handleOpenPreview(inv)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#181D38] hover:bg-[#222A50] border border-[#434D85] text-[#9EA7FC] hover:text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+                            title="Lihat Dokumen Invoice"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Hasil</span>
+                          </button>
+                          <button
+                            id={`btn-delete-invoice-${inv.id}`}
+                            onClick={() => {
+                              setInvoiceToDelete(inv);
+                              setDeleteRelatedTx(false);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 hover:text-rose-100 text-xs font-bold transition-all shadow-sm cursor-pointer"
+                            title="Hapus Invoice"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Hapus</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -394,6 +479,126 @@ export const InvoiceView: React.FC<InvoiceViewProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Modal Konfirmasi Hapus Invoice */}
+      {invoiceToDelete && (
+        <div
+          id="modal-confirm-delete-invoice"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+        >
+          <div className="bg-[#090E1A] border border-rose-500/30 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden p-5 sm:p-6 space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    Hapus Invoice Tagihan
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Konfirmasi penghapusan faktur tagihan ini
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInvoiceToDelete(null)}
+                disabled={isDeleting}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Apakah Anda yakin ingin menghapus invoice{' '}
+              <span className="font-bold font-mono text-[#9EA7FC]">
+                {invoiceToDelete.nomorInvoice}
+              </span>{' '}
+              atas nama{' '}
+              <span className="font-bold text-white uppercase">
+                {invoiceToDelete.customer}
+              </span>
+              ?
+            </p>
+
+            <div className="p-3.5 rounded-xl bg-[#0E1526] border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Nomor Invoice:</span>
+                <span className="font-mono font-bold text-[#9EA7FC]">
+                  {invoiceToDelete.nomorInvoice}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Pelanggan:</span>
+                <span className="font-bold text-white uppercase">
+                  {invoiceToDelete.customer}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Total Tagihan:</span>
+                <span className="font-mono font-bold text-white">
+                  {formatRupiah(invoiceToDelete.total)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Status:</span>
+                <span
+                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    invoiceToDelete.status === 'Lunas'
+                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  }`}
+                >
+                  {invoiceToDelete.status === 'Lunas' ? 'Lunas' : 'Belum Lunas'}
+                </span>
+              </div>
+            </div>
+
+            {/* Checkbox opsi hapus transaksi di Belum Bayar */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-[#0E1526]/70 border border-slate-800 cursor-pointer hover:border-slate-700 transition-colors">
+              <input
+                id="checkbox-delete-related-tx"
+                type="checkbox"
+                checked={deleteRelatedTx}
+                onChange={(e) => setDeleteRelatedTx(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-slate-700 text-rose-500 focus:ring-rose-500 bg-slate-900 cursor-pointer"
+              />
+              <div className="text-left text-xs">
+                <span className="font-bold text-slate-200 block">
+                  Hapus juga tagihan di menu Belum Bayar
+                </span>
+                <span className="text-[11px] text-slate-400 block mt-0.5 leading-relaxed">
+                  Jika dicentang, transaksi hutang atas nama pelanggan ini di menu Belum Bayar juga ikut dihapus.
+                </span>
+              </div>
+            </label>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                id="btn-cancel-delete-invoice"
+                onClick={() => setInvoiceToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-delete-invoice"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-colors shadow-lg shadow-rose-900/30 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Menghapus...' : 'Ya, Hapus Invoice'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

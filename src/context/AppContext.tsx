@@ -236,7 +236,16 @@ interface AppContextType {
   invoices: Invoice[];
   addInvoice: (inv: Omit<Invoice, 'id' | 'createdAt'>) => Promise<Invoice>;
   updateInvoice: (id: string, inv: Partial<Invoice>) => Promise<void>;
-  deleteInvoice: (id: string) => Promise<void>;
+  deleteInvoice: (
+    id: string,
+    options?: {
+      nomorInvoice?: string;
+      customerName?: string;
+      deleteRelatedTransactions?: boolean;
+      rawTxIds?: string[];
+    }
+  ) => Promise<void>;
+  deletedInvoiceKeys: string[];
   markInvoiceLunas: (id: string) => Promise<void>;
   accounts: string[];
   addAccount: (name: string) => void;
@@ -332,6 +341,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
 
+  const [deletedInvoiceKeys, setDeletedInvoiceKeys] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(`${STORAGE_PREFIX}deleted_invoices_${userKey}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [accounts, setAccounts] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(`${STORAGE_PREFIX}accounts_${userKey}`);
@@ -412,6 +430,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.error(e);
     }
   }, [contacts, userKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}deleted_invoices_${userKey}`, JSON.stringify(deletedInvoiceKeys));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [deletedInvoiceKeys, userKey]);
 
   const login = (usernameInput: string, passwordInput: string): { success: boolean; message?: string } => {
     const cleanUser = usernameInput.trim().toLowerCase().replace(/^@/, '');
@@ -717,6 +743,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
     }
 
+    // Unhide customer if a new invoice is explicitly added
+    if (invData.customer) {
+      const custKey = `cust_${invData.customer.trim().toUpperCase()}`;
+      setDeletedInvoiceKeys((prev) =>
+        prev.filter((k) => k !== custKey && k !== newInvoice.nomorInvoice && k !== newInvoice.id)
+      );
+    }
+
     return newInvoice;
   };
 
@@ -724,8 +758,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, ...updateData } : i)));
   };
 
-  const deleteInvoice = async (id: string) => {
-    setInvoices((prev) => prev.filter((i) => i.id !== id));
+  const deleteInvoice = async (
+    id: string,
+    options?: {
+      nomorInvoice?: string;
+      customerName?: string;
+      deleteRelatedTransactions?: boolean;
+      rawTxIds?: string[];
+    }
+  ) => {
+    // 1. Remove from invoices state
+    setInvoices((prev) =>
+      prev.filter(
+        (i) =>
+          i.id !== id &&
+          (!options?.nomorInvoice || i.nomorInvoice !== options.nomorInvoice)
+      )
+    );
+
+    // 2. Track in deletedInvoiceKeys so any synchronized list hides it
+    const keysToAdd = [id];
+    if (options?.nomorInvoice) keysToAdd.push(options.nomorInvoice);
+    if (options?.customerName) {
+      keysToAdd.push(`cust_${options.customerName.trim().toUpperCase()}`);
+    }
+    setDeletedInvoiceKeys((prev) => Array.from(new Set([...prev, ...keysToAdd])));
+
+    // 3. If requested, also remove related unpaid transactions
+    if (options?.deleteRelatedTransactions) {
+      if (options.rawTxIds && options.rawTxIds.length > 0) {
+        const idSet = new Set(options.rawTxIds);
+        setTransactions((prev) => prev.filter((t) => !idSet.has(t.id)));
+      } else if (options.customerName) {
+        const targetName = options.customerName.trim().toUpperCase();
+        setTransactions((prev) =>
+          prev.filter(
+            (t) => !(t.nama.trim().toUpperCase() === targetName && t.status === 'Belum Bayar')
+          )
+        );
+      }
+    }
   };
 
   const markInvoiceLunas = async (id: string) => {
@@ -821,10 +893,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setContacts(DEFAULT_CONTACTS);
     setTransactions(DEFAULT_TRANSACTIONS);
     setInvoices(DEFAULT_INVOICES);
+    setDeletedInvoiceKeys([]);
     try {
       localStorage.removeItem(`${STORAGE_PREFIX}profile_${userKey}`);
       localStorage.removeItem(`${STORAGE_PREFIX}transactions_${userKey}`);
       localStorage.removeItem(`${STORAGE_PREFIX}invoices_${userKey}`);
+      localStorage.removeItem(`${STORAGE_PREFIX}deleted_invoices_${userKey}`);
       localStorage.removeItem(`${STORAGE_PREFIX}accounts_${userKey}`);
       localStorage.removeItem(`${STORAGE_PREFIX}transaction_types_${userKey}`);
       localStorage.removeItem(`${STORAGE_PREFIX}contacts_${userKey}`);
@@ -848,6 +922,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addInvoice,
         updateInvoice,
         deleteInvoice,
+        deletedInvoiceKeys,
         markInvoiceLunas,
         accounts,
         addAccount,
