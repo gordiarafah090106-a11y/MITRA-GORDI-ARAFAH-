@@ -1,0 +1,300 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction record for bookkeeping",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the transaction",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who owns this transaction",
+          "maxLength": 128
+        },
+        "tanggal": {
+          "type": "string",
+          "description": "Transaction date in YYYY-MM-DD format",
+          "maxLength": 10
+        },
+        "hari": {
+          "type": "string",
+          "description": "Day name of the transaction",
+          "maxLength": 20
+        },
+        "nama": {
+          "type": "string",
+          "description": "Customer name or entity",
+          "maxLength": 100
+        },
+        "akun": {
+          "type": "string",
+          "description": "Account or wallet name",
+          "maxLength": 50
+        },
+        "jenisTransaksi": {
+          "type": "string",
+          "description": "Type of service or transaction",
+          "maxLength": 100
+        },
+        "bayar": {
+          "type": "number",
+          "description": "Total payment amount in Rupiah"
+        },
+        "laba": {
+          "type": "number",
+          "description": "Profit or fee amount in Rupiah"
+        },
+        "status": {
+          "type": "string",
+          "description": "Payment status",
+          "enum": ["Lunas", "Belum Bayar"]
+        },
+        "tanggalBayar": {
+          "type": "string",
+          "description": "Date when invoice was marked paid",
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        }
+      },
+      "required": ["id", "userId", "tanggal", "nama", "akun", "jenisTransaksi", "bayar", "laba", "status"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Billing invoice document",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the invoice",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who owns this invoice",
+          "maxLength": 128
+        },
+        "nomorInvoice": {
+          "type": "string",
+          "description": "Human readable invoice number",
+          "maxLength": 50
+        },
+        "tanggal": {
+          "type": "string",
+          "description": "Invoice creation date",
+          "maxLength": 10
+        },
+        "customer": {
+          "type": "string",
+          "description": "Customer name",
+          "maxLength": 100
+        },
+        "whatsapp": {
+          "type": "string",
+          "description": "Customer WhatsApp phone number",
+          "maxLength": 30
+        },
+        "metodePembayaran": {
+          "type": "string",
+          "description": "Payment method description",
+          "maxLength": 50
+        },
+        "subtotal": {
+          "type": "number",
+          "description": "Subtotal amount before discount"
+        },
+        "diskon": {
+          "type": "number",
+          "description": "Discount amount"
+        },
+        "total": {
+          "type": "number",
+          "description": "Total bill amount in Rupiah"
+        },
+        "terbilang": {
+          "type": "string",
+          "description": "Spelled out amount in words",
+          "maxLength": 300
+        },
+        "catatan": {
+          "type": "string",
+          "description": "Additional notes",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "description": "Invoice status",
+          "enum": ["Lunas", "Belum"]
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation timestamp in milliseconds"
+        }
+      },
+      "required": ["id", "userId", "nomorInvoice", "tanggal", "customer", "metodePembayaran", "total", "status"]
+    },
+    "Contact": {
+      "title": "Contact",
+      "description": "Customer contact details",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique contact ID",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who owns this contact",
+          "maxLength": 128
+        },
+        "nama": {
+          "type": "string",
+          "description": "Customer name",
+          "maxLength": 100
+        },
+        "whatsapp": {
+          "type": "string",
+          "description": "Customer WhatsApp number",
+          "maxLength": 30
+        },
+        "totalTransaksi": {
+          "type": "number",
+          "description": "Count of transactions made by this contact"
+        }
+      },
+      "required": ["id", "userId", "nama", "whatsapp"]
+    },
+    "MitraProfile": {
+      "title": "MitraProfile",
+      "description": "Store or business profile information",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Profile identifier",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who owns this profile",
+          "maxLength": 128
+        },
+        "username": {
+          "type": "string",
+          "description": "Business username or handle",
+          "maxLength": 50
+        },
+        "namaMitra": {
+          "type": "string",
+          "description": "Business or store name",
+          "maxLength": 100
+        },
+        "inisialLogo": {
+          "type": "string",
+          "description": "Initials for fallback logo",
+          "maxLength": 5
+        },
+        "logoUrl": {
+          "type": "string",
+          "description": "URL or data URI of business logo",
+          "maxLength": 50000
+        },
+        "alamat": {
+          "type": "string",
+          "description": "Store address",
+          "maxLength": 255
+        },
+        "jenisUsaha": {
+          "type": "string",
+          "description": "Business category",
+          "maxLength": 100
+        },
+        "tagline": {
+          "type": "string",
+          "description": "Business slogan",
+          "maxLength": 150
+        },
+        "noWhatsapp": {
+          "type": "string",
+          "description": "Business WhatsApp number",
+          "maxLength": 30
+        },
+        "metodeTransfer": {
+          "type": "string",
+          "description": "Bank account details for payment",
+          "maxLength": 500
+        },
+        "strukHeader": {
+          "type": "string",
+          "description": "Header text on receipts",
+          "maxLength": 200
+        },
+        "strukFooter": {
+          "type": "string",
+          "description": "Footer greeting on receipts",
+          "maxLength": 200
+        }
+      },
+      "required": ["id", "userId", "namaMitra"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "User specific bookkeeping settings",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Settings identifier",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "User ID who owns these settings",
+          "maxLength": 128
+        },
+        "accounts": {
+          "type": "array",
+          "description": "List of active account/e-wallet names"
+        },
+        "transactionTypes": {
+          "type": "array",
+          "description": "List of transaction categories"
+        },
+        "deletedInvoiceKeys": {
+          "type": "array",
+          "description": "Keys of deleted invoices to prevent regeneration"
+        }
+      },
+      "required": ["id", "userId"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/profile/{profileId}": {
+      "schema": "MitraProfile",
+      "description": "Business profile for the user"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial bookkeeping transactions"
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Invoices generated by the user"
+    },
+    "/users/{userId}/contacts/{contactId}": {
+      "schema": "Contact",
+      "description": "Client and debtor contact phone numbers"
+    },
+    "/users/{userId}/settings/{settingsId}": {
+      "schema": "AppSettings",
+      "description": "Custom transaction types, account lists, and deletion records"
+    }
+  }
+}

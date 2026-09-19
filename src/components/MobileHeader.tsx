@@ -5,6 +5,7 @@ import {
   FileText,
   Settings,
   Lock,
+  Cloud,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ActiveTab } from '../types';
@@ -14,7 +15,7 @@ interface MobileHeaderProps {
 }
 
 export const MobileHeader: React.FC<MobileHeaderProps> = ({ onOpenAuth }) => {
-  const { profile, activeTab, setActiveTab, transactions } = useApp();
+  const { profile, activeTab, setActiveTab, transactions, isFirestoreConnected, isSyncing } = useApp();
 
   const belumBayarCount = transactions.filter((t) => t.status === 'Belum Bayar').length;
 
@@ -57,14 +58,32 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({ onOpenAuth }) => {
           </div>
         </div>
 
-        <button
-          id="btn-mobile-auth"
-          onClick={onOpenAuth}
-          className="p-2 rounded-lg bg-slate-800/80 text-slate-300 hover:text-rose-400 border border-slate-700/60"
-          title="Kunci Aplikasi"
-        >
-          <Lock className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <div
+            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700/60 text-[10px] text-slate-300"
+            title={isFirestoreConnected ? 'Database Cloud Terhubung Real-Time' : 'Menghubungkan Database Cloud'}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isFirestoreConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <Cloud
+              className={`w-3.5 h-3.5 ${
+                isSyncing ? 'text-indigo-400 animate-spin' : isFirestoreConnected ? 'text-emerald-400' : 'text-amber-400'
+              }`}
+            />
+          </div>
+
+          <button
+            id="btn-mobile-auth"
+            onClick={onOpenAuth}
+            className="p-2 rounded-lg bg-slate-800/80 text-slate-300 hover:text-rose-400 border border-slate-700/60"
+            title="Kunci Aplikasi"
+          >
+            <Lock className="w-4 h-4" />
+          </button>
+        </div>
       </header>
 
       {/* Bottom Mobile Navigation Bar */}

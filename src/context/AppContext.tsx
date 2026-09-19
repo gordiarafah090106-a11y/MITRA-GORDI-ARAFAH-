@@ -1,5 +1,29 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import {
+  collection,
+  doc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  getDocs,
+  writeBatch,
+} from 'firebase/firestore';
+import {
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import {
+  db,
+  auth,
+  googleProvider,
+  testConnection,
+  handleFirestoreError,
+  OperationType,
+} from '../lib/firebase';
+import {
   Transaction,
   Invoice,
   MitraProfile,
@@ -268,6 +292,11 @@ interface AppContextType {
   resetToDefaultData: () => void;
   isFirestoreConnected: boolean;
   isAuthenticated: boolean;
+  firebaseUser: FirebaseUser | null;
+  loginWithGoogle: () => Promise<{ success: boolean; message?: string }>;
+  syncNow: () => Promise<void>;
+  isSyncing: boolean;
+  lastSyncTime: Date | null;
   login: (u: string, p: string) => { success: boolean; message?: string };
   register: (accountData: {
     username: string;
@@ -380,7 +409,170 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedMonth, setSelectedMonth] = useState<number>(8); // September (0-indexed = 8)
-  const [isFirestoreConnected] = useState<boolean>(true);
+  const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(true);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(auth.currentUser);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+
+  // Check connectivity to Cloud Firestore
+  useEffect(() => {
+    testConnection().then((connected) => {
+      setIsFirestoreConnected(connected);
+    });
+  }, []);
+
+  // Listen to Firebase Auth state & attach real-time Firestore synchronization
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setFirebaseUser(user);
+        setIsAuthenticated(true);
+        sessionStorage.setItem(`${STORAGE_PREFIX}session_auth`, 'true');
+        if (user.displayName) {
+          setCurrentUsername(user.displayName);
+        }
+
+        const uid = user.uid;
+
+        // 1. Transactions Real-time Listener
+        const txCol = collection(db, 'users', uid, 'transactions');
+        const unsubTx = onSnapshot(
+          txCol,
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const cloudTxs = snapshot.docs.map((d) => d.data() as Transaction);
+              cloudTxs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              setTransactions(cloudTxs);
+              setLastSyncTime(new Date());
+            } else {
+              // Seed initial local transactions if Firestore is empty
+              transactions.forEach((tx) => {
+                setDoc(doc(db, 'users', uid, 'transactions', tx.id), {
+                  ...tx,
+                  userId: uid,
+                }).catch((err) =>
+                  handleFirestoreError(err, OperationType.CREATE, `users/${uid}/transactions/${tx.id}`)
+                );
+              });
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${uid}/transactions`);
+          }
+        );
+
+        // 2. Invoices Real-time Listener
+        const invCol = collection(db, 'users', uid, 'invoices');
+        const unsubInv = onSnapshot(
+          invCol,
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const cloudInvs = snapshot.docs.map((d) => d.data() as Invoice);
+              cloudInvs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+              setInvoices(cloudInvs);
+              setLastSyncTime(new Date());
+            } else {
+              invoices.forEach((inv) => {
+                setDoc(doc(db, 'users', uid, 'invoices', inv.id), {
+                  ...inv,
+                  userId: uid,
+                }).catch((err) =>
+                  handleFirestoreError(err, OperationType.CREATE, `users/${uid}/invoices/${inv.id}`)
+                );
+              });
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${uid}/invoices`);
+          }
+        );
+
+        // 3. Contacts Real-time Listener
+        const contactCol = collection(db, 'users', uid, 'contacts');
+        const unsubContacts = onSnapshot(
+          contactCol,
+          (snapshot) => {
+            if (!snapshot.empty) {
+              const cloudContacts = snapshot.docs.map((d) => d.data() as Contact);
+              setContacts(cloudContacts);
+              setLastSyncTime(new Date());
+            } else {
+              contacts.forEach((c) => {
+                setDoc(doc(db, 'users', uid, 'contacts', c.id), {
+                  ...c,
+                  userId: uid,
+                }).catch((err) =>
+                  handleFirestoreError(err, OperationType.CREATE, `users/${uid}/contacts/${c.id}`)
+                );
+              });
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${uid}/contacts`);
+          }
+        );
+
+        // 4. Profile Real-time Listener
+        const profileRef = doc(db, 'users', uid, 'profile', 'main');
+        const unsubProfile = onSnapshot(
+          profileRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              setProfile(docSnap.data() as MitraProfile);
+              setLastSyncTime(new Date());
+            } else {
+              setDoc(profileRef, { ...profile, userId: uid }).catch((err) =>
+                handleFirestoreError(err, OperationType.WRITE, `users/${uid}/profile/main`)
+              );
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${uid}/profile/main`);
+          }
+        );
+
+        // 5. Settings Real-time Listener
+        const settingsRef = doc(db, 'users', uid, 'settings', 'main');
+        const unsubSettings = onSnapshot(
+          settingsRef,
+          (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (Array.isArray(data.accounts)) setAccounts(data.accounts);
+              if (Array.isArray(data.transactionTypes)) setTransactionTypes(data.transactionTypes);
+              if (Array.isArray(data.deletedInvoiceKeys)) setDeletedInvoiceKeys(data.deletedInvoiceKeys);
+              setLastSyncTime(new Date());
+            } else {
+              setDoc(settingsRef, {
+                id: 'main',
+                userId: uid,
+                accounts,
+                transactionTypes,
+                deletedInvoiceKeys,
+              }).catch((err) =>
+                handleFirestoreError(err, OperationType.WRITE, `users/${uid}/settings/main`)
+              );
+            }
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.GET, `users/${uid}/settings/main`);
+          }
+        );
+
+        return () => {
+          unsubTx();
+          unsubInv();
+          unsubContacts();
+          unsubProfile();
+          unsubSettings();
+        };
+      } else {
+        setFirebaseUser(null);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -534,8 +726,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   };
 
-  const logout = () => {
+  const logout = async () => {
     setIsAuthenticated(false);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.error(e);
+    }
+    setFirebaseUser(null);
     try {
       sessionStorage.removeItem(`${STORAGE_PREFIX}session_auth`);
       sessionStorage.removeItem(`${STORAGE_PREFIX}logged_username`);
@@ -544,8 +742,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const loginWithGoogle = async (): Promise<{ success: boolean; message?: string }> => {
+    try {
+      setIsSyncing(true);
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
+        setFirebaseUser(result.user);
+        setIsAuthenticated(true);
+        sessionStorage.setItem(`${STORAGE_PREFIX}session_auth`, 'true');
+        if (result.user.displayName) {
+          setCurrentUsername(result.user.displayName);
+        }
+        return { success: true };
+      }
+      return { success: false, message: 'Login Google dibatalkan.' };
+    } catch (err: unknown) {
+      console.error('Google Sign In error:', err);
+      return {
+        success: false,
+        message: err instanceof Error ? err.message : 'Gagal masuk dengan Google.',
+      };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const updateProfile = (data: Partial<MitraProfile>) => {
-    setProfile((prev) => ({ ...prev, ...data }));
+    setProfile((prev) => {
+      const merged = { ...prev, ...data };
+      if (firebaseUser) {
+        setDoc(doc(db, 'users', firebaseUser.uid, 'profile', 'main'), {
+          ...merged,
+          userId: firebaseUser.uid,
+        }, { merge: true }).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/profile/main`)
+        );
+      }
+      return merged;
+    });
   };
 
   const addTransaction = (txData: Omit<Transaction, 'id' | 'createdAt'>) => {
@@ -558,24 +792,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setTransactions((prev) => [newTx, ...prev]);
 
+    if (firebaseUser) {
+      setDoc(doc(db, 'users', firebaseUser.uid, 'transactions', newTx.id), {
+        ...newTx,
+        userId: firebaseUser.uid,
+      }).catch((err) =>
+        handleFirestoreError(err, OperationType.CREATE, `users/${firebaseUser.uid}/transactions/${newTx.id}`)
+      );
+    }
+
     // Also auto update contacts count
     if (txData.nama) {
       setContacts((prev) => {
         const found = prev.find((c) => c.nama.trim().toUpperCase() === txData.nama.trim().toUpperCase());
         if (found) {
-          return prev.map((c) =>
-            c.id === found.id ? { ...c, totalTransaksi: (c.totalTransaksi || 0) + 1 } : c
-          );
+          const updated = { ...found, totalTransaksi: (found.totalTransaksi || 0) + 1 };
+          if (firebaseUser) {
+            setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', found.id), {
+              ...updated,
+              userId: firebaseUser.uid,
+            }, { merge: true }).catch((err) =>
+              handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}/contacts/${found.id}`)
+            );
+          }
+          return prev.map((c) => (c.id === found.id ? updated : c));
         } else {
-          return [
-            ...prev,
-            {
-              id: `c_${Date.now()}`,
-              nama: txData.nama.trim().toUpperCase(),
-              whatsapp: '',
-              totalTransaksi: 1,
-            },
-          ];
+          const newContact: Contact = {
+            id: `c_${Date.now()}`,
+            nama: txData.nama.trim().toUpperCase(),
+            whatsapp: '',
+            totalTransaksi: 1,
+          };
+          if (firebaseUser) {
+            setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', newContact.id), {
+              ...newContact,
+              userId: firebaseUser.uid,
+            }).catch((err) =>
+              handleFirestoreError(err, OperationType.CREATE, `users/${firebaseUser.uid}/contacts/${newContact.id}`)
+            );
+          }
+          return [...prev, newContact];
         }
       });
     }
@@ -589,6 +845,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (updateData.tanggal) {
             merged.hari = getHari(updateData.tanggal);
           }
+          if (firebaseUser) {
+            updateDoc(doc(db, 'users', firebaseUser.uid, 'transactions', id), {
+              ...merged,
+              userId: firebaseUser.uid,
+            }).catch((err) =>
+              handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}/transactions/${id}`)
+            );
+          }
           return merged;
         }
         return t;
@@ -598,6 +862,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteTransaction = async (id: string) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+    if (firebaseUser) {
+      try {
+        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'transactions', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `users/${firebaseUser.uid}/transactions/${id}`);
+      }
+    }
   };
 
   const markTransactionLunas = async (id: string) => {
@@ -751,11 +1022,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    if (firebaseUser) {
+      setDoc(doc(db, 'users', firebaseUser.uid, 'invoices', newInvoice.id), {
+        ...newInvoice,
+        userId: firebaseUser.uid,
+      }).catch((err) =>
+        handleFirestoreError(err, OperationType.CREATE, `users/${firebaseUser.uid}/invoices/${newInvoice.id}`)
+      );
+    }
+
     return newInvoice;
   };
 
   const updateInvoice = async (id: string, updateData: Partial<Invoice>) => {
     setInvoices((prev) => prev.map((i) => (i.id === id ? { ...i, ...updateData } : i)));
+    if (firebaseUser) {
+      updateDoc(doc(db, 'users', firebaseUser.uid, 'invoices', id), updateData).catch((err) =>
+        handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}/invoices/${id}`)
+      );
+    }
   };
 
   const deleteInvoice = async (
@@ -782,13 +1067,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (options?.customerName) {
       keysToAdd.push(`cust_${options.customerName.trim().toUpperCase()}`);
     }
-    setDeletedInvoiceKeys((prev) => Array.from(new Set([...prev, ...keysToAdd])));
+    const updatedDeletedKeys = Array.from(new Set([...deletedInvoiceKeys, ...keysToAdd]));
+    setDeletedInvoiceKeys(updatedDeletedKeys);
+
+    if (firebaseUser) {
+      try {
+        await deleteDoc(doc(db, 'users', firebaseUser.uid, 'invoices', id));
+        await setDoc(
+          doc(db, 'users', firebaseUser.uid, 'settings', 'main'),
+          { deletedInvoiceKeys: updatedDeletedKeys, userId: firebaseUser.uid },
+          { merge: true }
+        );
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `users/${firebaseUser.uid}/invoices/${id}`);
+      }
+    }
 
     // 3. If requested, also remove related unpaid transactions
     if (options?.deleteRelatedTransactions) {
       if (options.rawTxIds && options.rawTxIds.length > 0) {
         const idSet = new Set(options.rawTxIds);
         setTransactions((prev) => prev.filter((t) => !idSet.has(t.id)));
+        if (firebaseUser) {
+          options.rawTxIds.forEach((txId) => {
+            deleteDoc(doc(db, 'users', firebaseUser.uid, 'transactions', txId)).catch((err) =>
+              handleFirestoreError(err, OperationType.DELETE, `users/${firebaseUser.uid}/transactions/${txId}`)
+            );
+          });
+        }
       } else if (options.customerName) {
         const targetName = options.customerName.trim().toUpperCase();
         setTransactions((prev) =>
@@ -819,11 +1125,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             i.status === 'Belum')
       );
       if (match) {
-        return prev.map((i) =>
+        const updated = prev.map((i) =>
           i.id === match.id || (customerName && i.customer.trim().toUpperCase() === customerName.trim().toUpperCase())
-            ? { ...i, status: 'Lunas' }
+            ? { ...i, status: 'Lunas' as const }
             : i
         );
+        if (firebaseUser && match.id && !match.id.startsWith('synced_inv_')) {
+          updateDoc(doc(db, 'users', firebaseUser.uid, 'invoices', match.id), { status: 'Lunas' }).catch(
+            (err) => handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}/invoices/${match.id}`)
+          );
+        }
+        return updated;
       }
       return prev;
     });
@@ -833,11 +1145,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const today = new Date().toISOString().split('T')[0];
       const targetName = customerName.trim().toUpperCase();
       setTransactions((prev) =>
-        prev.map((tx) =>
-          tx.nama.trim().toUpperCase() === targetName && tx.status === 'Belum Bayar'
-            ? { ...tx, status: 'Lunas', tanggalBayar: today }
-            : tx
-        )
+        prev.map((tx) => {
+          if (tx.nama.trim().toUpperCase() === targetName && tx.status === 'Belum Bayar') {
+            const updatedTx = { ...tx, status: 'Lunas' as const, tanggalBayar: today };
+            if (firebaseUser) {
+              updateDoc(doc(db, 'users', firebaseUser.uid, 'transactions', tx.id), {
+                status: 'Lunas',
+                tanggalBayar: today,
+              }).catch((err) =>
+                handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}/transactions/${tx.id}`)
+              );
+            }
+            return updatedTx;
+          }
+          return tx;
+        })
       );
     }
   };
@@ -845,45 +1167,150 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addAccount = (name: string) => {
     const trimmed = name.trim();
     if (trimmed && !accounts.includes(trimmed)) {
-      setAccounts((prev) => [...prev, trimmed].sort());
+      const updated = [...accounts, trimmed].sort();
+      setAccounts(updated);
+      if (firebaseUser) {
+        setDoc(
+          doc(db, 'users', firebaseUser.uid, 'settings', 'main'),
+          { accounts: updated, userId: firebaseUser.uid },
+          { merge: true }
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/settings/main`)
+        );
+      }
     }
   };
 
   const deleteAccount = (name: string) => {
-    setAccounts((prev) => prev.filter((a) => a !== name));
+    const updated = accounts.filter((a) => a !== name);
+    setAccounts(updated);
+    if (firebaseUser) {
+      setDoc(
+        doc(db, 'users', firebaseUser.uid, 'settings', 'main'),
+        { accounts: updated, userId: firebaseUser.uid },
+        { merge: true }
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/settings/main`)
+      );
+    }
   };
 
   const addTransactionType = (name: string) => {
     const trimmed = name.trim();
     if (trimmed && !transactionTypes.includes(trimmed)) {
-      setTransactionTypes((prev) => [...prev, trimmed].sort());
+      const updated = [...transactionTypes, trimmed].sort();
+      setTransactionTypes(updated);
+      if (firebaseUser) {
+        setDoc(
+          doc(db, 'users', firebaseUser.uid, 'settings', 'main'),
+          { transactionTypes: updated, userId: firebaseUser.uid },
+          { merge: true }
+        ).catch((err) =>
+          handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/settings/main`)
+        );
+      }
     }
   };
 
   const deleteTransactionType = (name: string) => {
-    setTransactionTypes((prev) => prev.filter((t) => t !== name));
+    const updated = transactionTypes.filter((t) => t !== name);
+    setTransactionTypes(updated);
+    if (firebaseUser) {
+      setDoc(
+        doc(db, 'users', firebaseUser.uid, 'settings', 'main'),
+        { transactionTypes: updated, userId: firebaseUser.uid },
+        { merge: true }
+      ).catch((err) =>
+        handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/settings/main`)
+      );
+    }
   };
 
   const addOrUpdateContact = (contact: Omit<Contact, 'id'> & { id?: string }) => {
     setContacts((prev) => {
       if (contact.id) {
-        return prev.map((c) => (c.id === contact.id ? { ...c, ...contact } : c));
+        const updated = prev.map((c) => (c.id === contact.id ? { ...c, ...contact } : c));
+        if (firebaseUser) {
+          setDoc(
+            doc(db, 'users', firebaseUser.uid, 'contacts', contact.id),
+            { ...contact, id: contact.id, userId: firebaseUser.uid },
+            { merge: true }
+          ).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/contacts/${contact.id}`)
+          );
+        }
+        return updated;
       } else {
-        return [
-          ...prev,
-          {
-            id: `c_${Date.now()}`,
-            nama: contact.nama.trim().toUpperCase(),
-            whatsapp: contact.whatsapp.trim(),
-            totalTransaksi: contact.totalTransaksi || 0,
-          },
-        ];
+        const newContact: Contact = {
+          id: `c_${Date.now()}`,
+          nama: contact.nama.trim().toUpperCase(),
+          whatsapp: contact.whatsapp.trim(),
+          totalTransaksi: contact.totalTransaksi || 0,
+        };
+        if (firebaseUser) {
+          setDoc(doc(db, 'users', firebaseUser.uid, 'contacts', newContact.id), {
+            ...newContact,
+            userId: firebaseUser.uid,
+          }).catch((err) =>
+            handleFirestoreError(err, OperationType.CREATE, `users/${firebaseUser.uid}/contacts/${newContact.id}`)
+          );
+        }
+        return [...prev, newContact];
       }
     });
   };
 
   const deleteContact = (id: string) => {
     setContacts((prev) => prev.filter((c) => c.id !== id));
+    if (firebaseUser) {
+      deleteDoc(doc(db, 'users', firebaseUser.uid, 'contacts', id)).catch((err) =>
+        handleFirestoreError(err, OperationType.DELETE, `users/${firebaseUser.uid}/contacts/${id}`)
+      );
+    }
+  };
+
+  const syncNow = async () => {
+    if (!firebaseUser) {
+      await loginWithGoogle();
+      return;
+    }
+    try {
+      setIsSyncing(true);
+      const uid = firebaseUser.uid;
+      const batch = writeBatch(db);
+
+      // 1. Profile
+      batch.set(doc(db, 'users', uid, 'profile', 'main'), { ...profile, userId: uid }, { merge: true });
+
+      // 2. Settings
+      batch.set(
+        doc(db, 'users', uid, 'settings', 'main'),
+        { id: 'main', userId: uid, accounts, transactionTypes, deletedInvoiceKeys },
+        { merge: true }
+      );
+
+      // 3. Transactions
+      transactions.forEach((tx) => {
+        batch.set(doc(db, 'users', uid, 'transactions', tx.id), { ...tx, userId: uid }, { merge: true });
+      });
+
+      // 4. Invoices
+      invoices.forEach((inv) => {
+        batch.set(doc(db, 'users', uid, 'invoices', inv.id), { ...inv, userId: uid }, { merge: true });
+      });
+
+      // 5. Contacts
+      contacts.forEach((c) => {
+        batch.set(doc(db, 'users', uid, 'contacts', c.id), { ...c, userId: uid }, { merge: true });
+      });
+
+      await batch.commit();
+      setLastSyncTime(new Date());
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}/batch_sync`);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const resetToDefaultData = () => {
@@ -945,6 +1372,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetToDefaultData,
         isFirestoreConnected,
         isAuthenticated,
+        firebaseUser,
+        loginWithGoogle,
+        syncNow,
+        isSyncing,
+        lastSyncTime,
         login,
         logout,
         register,

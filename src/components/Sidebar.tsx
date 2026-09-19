@@ -16,7 +16,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ onOpenAuth }) => {
-  const { profile, activeTab, setActiveTab, transactions, isFirestoreConnected } = useApp();
+  const { profile, activeTab, setActiveTab, transactions, isFirestoreConnected, isSyncing } = useApp();
 
   const belumBayarCount = transactions.filter((t) => t.status === 'Belum Bayar').length;
 
@@ -97,14 +97,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ onOpenAuth }) => {
         <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900/80 border border-slate-800/80 text-[11px] text-slate-400">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              <span
+                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                  isFirestoreConnected ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              ></span>
+              <span
+                className={`relative inline-flex rounded-full h-2 w-2 ${
+                  isFirestoreConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                }`}
+              ></span>
             </span>
-            <span className="font-medium text-slate-300">Sinkronisasi</span>
+            <span className="font-medium text-slate-300">
+              {isSyncing ? 'Menyinkronkan...' : 'Cloud Real-Time'}
+            </span>
           </div>
-          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+          <span
+            className={`text-[10px] font-bold flex items-center gap-1 ${
+              isFirestoreConnected ? 'text-emerald-400' : 'text-amber-400'
+            }`}
+          >
             <CheckCircle2 className="w-3 h-3" />
-            Aktif
+            {isFirestoreConnected ? 'Aktif (HP/PC)' : 'Pending'}
           </span>
         </div>
 

@@ -16,6 +16,12 @@ import {
   FileSignature,
   Receipt,
   FileText,
+  Cloud,
+  RefreshCw,
+  Smartphone,
+  Laptop,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -33,6 +39,12 @@ export const SettingsView: React.FC = () => {
     addOrUpdateContact,
     deleteContact,
     resetToDefaultData,
+    firebaseUser,
+    loginWithGoogle,
+    syncNow,
+    isSyncing,
+    lastSyncTime,
+    isFirestoreConnected,
   } = useApp();
 
   // Profile Form state
@@ -48,6 +60,19 @@ export const SettingsView: React.FC = () => {
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  const handleTriggerSync = async () => {
+    setSyncMessage(null);
+    try {
+      await syncNow();
+      setSyncMessage('Sinkronisasi cloud berhasil! Semua data terbaru tersimpan di Firestore.');
+      setTimeout(() => setSyncMessage(null), 4000);
+    } catch {
+      setSyncMessage('Gagal menyinkronkan data ke cloud.');
+      setTimeout(() => setSyncMessage(null), 4000);
+    }
+  };
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const ttdInputRef = useRef<HTMLInputElement>(null);
@@ -152,6 +177,143 @@ export const SettingsView: React.FC = () => {
           <span>Pengaturan profil mitra berhasil disimpan!</span>
         </div>
       )}
+
+      {/* Cloud Database & Real-Time Sync Panel */}
+      <div className="bg-[#141A28] border border-indigo-500/30 rounded-2xl p-5 sm:p-7 shadow-xl space-y-5 relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shrink-0">
+              <Cloud className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white">Database Cloud & Sinkronisasi Real-Time</h2>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    isFirestoreConnected
+                      ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                  }`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isFirestoreConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                    }`}
+                  ></span>
+                  {isFirestoreConnected ? 'Firestore Aktif' : 'Menghubungkan'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Penyimpanan cloud Firebase agar semua transaksi dan invoice dapat diakses bersamaan dari HP maupun PC
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              id="btn-sync-cloud-now"
+              onClick={handleTriggerSync}
+              disabled={isSyncing}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
+            </button>
+          </div>
+        </div>
+
+        {syncMessage && (
+          <div className="p-3 bg-emerald-500/15 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs font-medium flex items-center gap-2 animate-fade-in">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{syncMessage}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Info Akun Cloud */}
+          <div className="p-4 rounded-xl bg-[#0E1320] border border-slate-800 space-y-2">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Status Akun Cloud</span>
+            {firebaseUser ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs text-white">
+                    {firebaseUser.displayName?.charAt(0) || firebaseUser.email?.charAt(0) || 'G'}
+                  </div>
+                  <div className="overflow-hidden">
+                    <p className="text-xs font-bold text-white truncate">
+                      {firebaseUser.displayName || 'Pengguna Terverifikasi'}
+                    </p>
+                    <p className="text-[11px] text-slate-400 truncate">{firebaseUser.email || firebaseUser.uid}</p>
+                  </div>
+                </div>
+                <div className="pt-2 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Terakhir Sinkron:</span>
+                  <span className="font-mono text-indigo-300">
+                    {lastSyncTime ? lastSyncTime.toLocaleTimeString('id-ID') : 'Real-time aktif'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-300">
+                  Data Anda tersinkron ke cloud Firestore. Anda juga dapat masuk dengan Akun Google untuk menghubungkan perangkat lain secara langsung.
+                </p>
+                <button
+                  type="button"
+                  onClick={loginWithGoogle}
+                  className="w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-white border border-slate-700 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24">
+                    <path
+                      fill="#4285F4"
+                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.97 0 12s.45 3.84 1.25 5.42l4.03-3.15z"
+                    />
+                    <path
+                      fill="#EA4335"
+                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                    />
+                  </svg>
+                  <span>Hubungkan Akun Google Cloud</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Akses Multi-Device Info */}
+          <div className="p-4 rounded-xl bg-[#0E1320] border border-slate-800 space-y-2">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Akses HP & PC Real-Time</span>
+            <div className="flex items-center gap-4 pt-1">
+              <div className="flex items-center gap-2 text-slate-300">
+                <Smartphone className="w-5 h-5 text-indigo-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-white">Ponsel / HP</p>
+                  <p className="text-[10px] text-slate-400">Android & iOS</p>
+                </div>
+              </div>
+              <div className="h-6 w-px bg-slate-800"></div>
+              <div className="flex items-center gap-2 text-slate-300">
+                <Laptop className="w-5 h-5 text-indigo-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-white">Laptop / PC</p>
+                  <p className="text-[10px] text-slate-400">Browser Komputer</p>
+                </div>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+              Data tersinkron otomatis dua arah setiap kali ada transaksi baru, pelunasan piutang, maupun pembuatan invoice.
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Section 1: Profil Mitra Usaha */}
       <div className="bg-[#141A28] border border-slate-800/90 rounded-2xl p-5 sm:p-7 shadow-xl space-y-6">
