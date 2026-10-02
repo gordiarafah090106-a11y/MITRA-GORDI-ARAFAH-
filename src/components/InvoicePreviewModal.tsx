@@ -4,16 +4,17 @@ import {
   Printer,
   Download,
   Share2,
-  CheckCircle2,
   Loader2,
   Phone,
   Trash2,
 } from 'lucide-react';
-import { toPng } from 'html-to-image';
 import { useApp } from '../context/AppContext';
 import { Invoice } from '../types';
 import { formatRupiah, formatTanggal } from '../utils/formatters';
-import { shareImageToWhatsApp } from '../utils/whatsappShare';
+import {
+  shareImageToWhatsApp,
+  captureElementAsPngDataUrl,
+} from '../utils/whatsappShare';
 
 interface InvoicePreviewModalProps {
   isOpen: boolean;
@@ -26,7 +27,7 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
   onClose,
   invoice,
 }) => {
-  const { profile, markInvoiceLunas, deleteInvoice } = useApp();
+  const { profile, deleteInvoice } = useApp();
   const printRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
@@ -47,11 +48,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
   if (!isOpen || !invoice) return null;
 
   const isLunas = currentStatus === 'Lunas';
-
-  const handleMarkLunas = async () => {
-    setCurrentStatus('Lunas');
-    await markInvoiceLunas(invoice.id);
-  };
 
   const handleDeleteInvoice = async () => {
     setIsDeleting(true);
@@ -74,10 +70,9 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
     if (!printRef.current || isDownloading) return;
     setIsDownloading(true);
     try {
-      const dataUrl = await toPng(printRef.current, {
-        cacheBust: true,
-        quality: 0.95,
+      const dataUrl = await captureElementAsPngDataUrl(printRef.current, {
         backgroundColor: '#090E1A',
+        targetWidth: 560,
       });
       const link = document.createElement('a');
       link.download = `${invoice.nomorInvoice}_${invoice.customer}.png`;
@@ -94,34 +89,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
     window.print();
   };
 
-  const getInvoiceCaption = () => {
-    const itemsText = invoice.items
-      .map(
-        (it, idx) =>
-          `${idx + 1}. ${it.jenisTransaksi} (${it.qty}x) = ${formatRupiah(it.total)}`
-      )
-      .join('\n');
-
-    return [
-      `Halo *${invoice.customer}*,`,
-      `Berikut rincian invoice tagihan *${invoice.nomorInvoice}* dari *${profile.namaMitra}*:`,
-      `Tanggal: ${formatTanggal(invoice.tanggal)}`,
-      '',
-      `*Rincian Tagihan:*`,
-      itemsText,
-      `---------------------------------`,
-      `*Total Tagihan: ${formatRupiah(invoice.total)}*`,
-      `(${invoice.terbilang})`,
-      `Status: *${invoice.status === 'Lunas' ? 'LUNAS' : 'BELUM BAYAR'}*`,
-      '',
-      `*Metode Pembayaran:*`,
-      profile.metodeTransfer ||
-        '1. Via Tunai / Cash\n2. Via Transfer:\n   A. 553801037985532 (BRI) An Gordi Arafah\n   B. 085189186944 (DANA) An Gordi Arafah',
-      '',
-      `Terima kasih telah mempercayakan transaksi Anda pada *${profile.namaMitra}*.`,
-    ].join('\n');
-  };
-
   const handleShareWhatsApp = async () => {
     if (!printRef.current || isSharing) return;
     setIsSharing(true);
@@ -132,9 +99,8 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
         element: printRef.current,
         filename: `${invoice.nomorInvoice}_${invoice.customer}`,
         phone: invoice.whatsapp,
-        caption: getInvoiceCaption(),
-        title: `Invoice ${invoice.nomorInvoice} - ${invoice.customer}`,
         backgroundColor: '#090E1A',
+        targetWidth: 560,
         onProgress: (status) => setShareStatusMsg(status),
       });
     } catch (err) {
@@ -162,27 +128,6 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {!isLunas && (
-              <button
-                id="btn-preview-mark-lunas"
-                onClick={handleMarkLunas}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md cursor-pointer"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Tandai Lunas</span>
-              </button>
-            )}
-
-            <button
-              id="btn-preview-download-png"
-              onClick={handleDownloadImage}
-              disabled={isDownloading || isSharing}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md cursor-pointer disabled:opacity-50"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isDownloading ? 'Menyimpan...' : 'Unduh'}</span>
-            </button>
-
             <button
               id="btn-preview-print"
               onClick={handlePrint}
@@ -363,15 +308,15 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
 
             {/* Items Table */}
             <div className="border-t border-slate-800 pt-2">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+              <div className="w-full overflow-visible">
+                <table className="w-full text-left text-[11px] sm:text-xs">
                   <thead className="text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-800 pb-1.5">
                     <tr>
-                      <th className="py-1.5 px-1 text-center w-8">NO</th>
-                      <th className="py-1.5 px-2">TRANSAKSI</th>
-                      <th className="py-1.5 px-2 text-center w-12">QTY</th>
-                      <th className="py-1.5 px-2 text-right">HARGA SATUAN</th>
-                      <th className="py-1.5 px-2 text-right">JUMLAH</th>
+                      <th className="py-1.5 px-1 text-center w-7">NO</th>
+                      <th className="py-1.5 px-1.5">TRANSAKSI</th>
+                      <th className="py-1.5 px-1 text-center w-10">QTY</th>
+                      <th className="py-1.5 px-1.5 text-right whitespace-nowrap">HARGA SATUAN</th>
+                      <th className="py-1.5 px-1.5 text-right whitespace-nowrap">JUMLAH</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 text-slate-200">
@@ -380,16 +325,16 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
                         <td className="py-2.5 px-1 text-center text-slate-400 font-mono text-[11px]">
                           {idx + 1}
                         </td>
-                        <td className="py-2.5 px-2 font-semibold text-white">
+                        <td className="py-2.5 px-1.5 font-semibold text-white break-words">
                           {item.jenisTransaksi}
                         </td>
-                        <td className="py-2.5 px-2 text-center font-mono text-slate-300">
+                        <td className="py-2.5 px-1 text-center font-mono text-slate-300 whitespace-nowrap">
                           {item.qty}
                         </td>
-                        <td className="py-2.5 px-2 text-right font-mono text-slate-300">
+                        <td className="py-2.5 px-1.5 text-right font-mono text-slate-300 whitespace-nowrap">
                           {formatRupiah(item.harga)}
                         </td>
-                        <td className="py-2.5 px-2 text-right font-mono font-bold text-white">
+                        <td className="py-2.5 px-1.5 text-right font-mono font-bold text-white whitespace-nowrap">
                           {formatRupiah(item.total)}
                         </td>
                       </tr>
@@ -400,32 +345,32 @@ export const InvoicePreviewModal: React.FC<InvoicePreviewModalProps> = ({
             </div>
 
             {/* Subtotal line */}
-            <div className="border-t border-slate-800 pt-2 flex items-center justify-between text-xs">
-              <span className="font-bold uppercase tracking-wider text-slate-300">
+            <div className="border-t border-slate-800 pt-2 flex items-center justify-between gap-2 text-xs">
+              <span className="font-bold uppercase tracking-wider text-slate-300 shrink-0">
                 SUBTOTAL
               </span>
-              <span className="font-mono font-bold text-white">
+              <span className="font-mono font-bold text-white whitespace-nowrap">
                 {formatRupiah(invoice.subtotal)}
               </span>
             </div>
 
             {invoice.diskon > 0 && (
-              <div className="flex items-center justify-between text-xs text-rose-400">
-                <span className="font-bold uppercase tracking-wider">
+              <div className="flex items-center justify-between gap-2 text-xs text-rose-400">
+                <span className="font-bold uppercase tracking-wider shrink-0">
                   DISKON
                 </span>
-                <span className="font-mono font-bold">
+                <span className="font-mono font-bold whitespace-nowrap">
                   -{formatRupiah(invoice.diskon)}
                 </span>
               </div>
             )}
 
             {/* TOTAL line */}
-            <div className="flex items-center justify-between text-base pt-1">
-              <span className="font-black uppercase tracking-wider text-white text-base sm:text-lg">
+            <div className="flex items-center justify-between gap-2 text-base pt-1">
+              <span className="font-black uppercase tracking-wider text-white text-base sm:text-lg shrink-0">
                 TOTAL
               </span>
-              <span className="font-mono font-black text-2xl sm:text-3xl text-[#00E599]">
+              <span className="font-mono font-black text-xl sm:text-3xl text-[#00E599] whitespace-nowrap">
                 {formatRupiah(invoice.total)}
               </span>
             </div>

@@ -1,18 +1,17 @@
-import { toBlob } from 'html-to-image';
+import { toBlob, toPng } from 'html-to-image';
 
 export interface ShareImageOptions {
   element: HTMLElement;
   filename: string;
   phone?: string;
-  caption: string;
-  title: string;
   backgroundColor?: string;
+  targetWidth?: number;
   onProgress?: (msg: string) => void;
 }
 
 export interface ShareResult {
   success: boolean;
-  method: 'web-share' | 'app-scheme' | 'web-link';
+  method: 'web-share' | 'app-scheme' | 'download';
   message?: string;
 }
 
@@ -33,10 +32,135 @@ export function formatWhatsAppPhone(phone?: string): string {
 }
 
 /**
- * Bagikan gambar hasil cetak/struk/invoice ke WhatsApp
- * 1. Menghasilkan PNG beresolusi tinggi dari DOM element
- * 2. Menggunakan Web Share API (jika didukung) untuk melampirkan file gambar langsung ke aplikasi WhatsApp
- * 3. Fallback: Mengunduh gambar ke perangkat / menyalin ke clipboard dan membuka aplikasi WhatsApp (whatsapp://) langsung ke chat tujuan
+ * Buat klon elemen pada kontainer offscreen dengan lebar tetap (desktop width)
+ * agar saat di-render menjadi gambar di HP (layar sempit), tabel & harga di sisi kanan
+ * tidak pernah terpotong (kepotong).
+ */
+async function withStagedElement<T>(
+  element: HTMLElement,
+  targetWidth: number,
+  backgroundColor: string,
+  callback: (stagedEl: HTMLElement, width: number, height: number) => Promise<T>
+): Promise<T> {
+  const stageContainer = document.createElement('div');
+  stageContainer.style.position = 'fixed';
+  stageContainer.style.top = '0';
+  stageContainer.style.left = '-9999px';
+  stageContainer.style.width = `${targetWidth}px`;
+  stageContainer.style.backgroundColor = backgroundColor;
+  stageContainer.style.zIndex = '-9999';
+  stageContainer.style.pointerEvents = 'none';
+  stageContainer.style.overflow = 'visible';
+
+  const cloned = element.cloneNode(true) as HTMLElement;
+  cloned.style.width = `${targetWidth}px`;
+  cloned.style.minWidth = `${targetWidth}px`;
+  cloned.style.maxWidth = `${targetWidth}px`;
+  cloned.style.margin = '0';
+  cloned.style.boxSizing = 'border-box';
+  cloned.style.overflow = 'visible';
+
+  // Pastikan untuk invoice punya padding yang cukup di semua sisi agar harga kanan tidak mepet/terpotong
+  if (element.id === 'printable-invoice-canvas') {
+    cloned.style.padding = '28px';
+  }
+
+  // Pastikan semua elemen di dalam klon tidak memotong konten secara horizontal (overflow-x)
+  const scrollableNodes = cloned.querySelectorAll<HTMLElement>('.overflow-x-auto, .overflow-hidden, table');
+  scrollableNodes.forEach((node) => {
+    // Jangan ubah overflow-hidden milik bingkai logo bulat/kotak kecil
+    if (node.classList.contains('w-14') && node.classList.contains('h-14')) {
+      return;
+    }
+    node.style.overflow = 'visible';
+    node.style.overflowX = 'visible';
+  });
+
+  // Pastikan seluruh sel tabel yang berisi harga tidak terpotong
+  const cells = cloned.querySelectorAll<HTMLElement>('th, td');
+  cells.forEach((cell) => {
+    if (cell.classList.contains('text-right')) {
+      cell.style.whiteSpace = 'nowrap';
+      cell.style.paddingRight = '6px';
+    }
+  });
+
+  stageContainer.appendChild(cloned);
+  document.body.appendChild(stageContainer);
+
+  try {
+    // Tunggu browser menghitung ulang layout pada ukuran targetWidth penuh
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+
+    const width = Math.ceil(cloned.scrollWidth || cloned.offsetWidth || targetWidth);
+    const height = Math.ceil(cloned.scrollHeight || cloned.offsetHeight);
+
+    return await callback(cloned, width, height);
+  } finally {
+    if (stageContainer.parentNode) {
+      stageContainer.parentNode.removeChild(stageContainer);
+    }
+  }
+}
+
+/**
+ * Menghasilkan PNG Data URL dengan ukuran utuh (anti-kepotong di HP)
+ */
+export async function captureElementAsPngDataUrl(
+  element: HTMLElement,
+  options: { backgroundColor?: string; targetWidth?: number } = {}
+): Promise<string> {
+  const defaultWidth = element.id === 'printable-thermal-struk' ? 380 : 560;
+  const targetWidth = options.targetWidth || defaultWidth;
+  const backgroundColor = options.backgroundColor || '#090E1A';
+
+  return withStagedElement(element, targetWidth, backgroundColor, async (stagedEl, width, height) => {
+    return await toPng(stagedEl, {
+      cacheBust: true,
+      quality: 0.98,
+      pixelRatio: 2,
+      width,
+      height,
+      canvasWidth: width,
+      canvasHeight: height,
+      backgroundColor,
+    });
+  });
+}
+
+/**
+ * Menghasilkan PNG Blob dengan ukuran utuh (anti-kepotong di HP)
+ */
+export async function captureElementAsBlob(
+  element: HTMLElement,
+  options: { backgroundColor?: string; targetWidth?: number } = {}
+): Promise<Blob> {
+  const defaultWidth = element.id === 'printable-thermal-struk' ? 380 : 560;
+  const targetWidth = options.targetWidth || defaultWidth;
+  const backgroundColor = options.backgroundColor || '#090E1A';
+
+  return withStagedElement(element, targetWidth, backgroundColor, async (stagedEl, width, height) => {
+    const blob = await toBlob(stagedEl, {
+      cacheBust: true,
+      quality: 0.98,
+      pixelRatio: 2,
+      width,
+      height,
+      canvasWidth: width,
+      canvasHeight: height,
+      backgroundColor,
+    });
+    if (!blob) {
+      throw new Error('Gagal menghasilkan gambar dari tampilan');
+    }
+    return blob;
+  });
+}
+
+/**
+ * Bagikan HANYA GAMBAR hasil cetak/struk/invoice ke WhatsApp (tanpa teks chat tambahan)
  */
 export async function shareImageToWhatsApp(
   options: ShareImageOptions
@@ -45,9 +169,8 @@ export async function shareImageToWhatsApp(
     element,
     filename,
     phone,
-    caption,
-    title,
     backgroundColor = '#0A101E',
+    targetWidth,
     onProgress,
   } = options;
 
@@ -59,22 +182,16 @@ export async function shareImageToWhatsApp(
   onProgress?.('Memproses gambar...');
 
   try {
-    // 1. Render element menjadi PNG Blob
-    const blob = await toBlob(element, {
-      cacheBust: true,
-      quality: 0.96,
-      pixelRatio: 2, // Kualitas tajam untuk kirim gambar
+    // 1. Render element menjadi PNG Blob dengan lebar penuh agar harga tidak terpotong di HP
+    const blob = await captureElementAsBlob(element, {
       backgroundColor,
+      targetWidth,
     });
-
-    if (!blob) {
-      throw new Error('Gagal menghasilkan gambar dari tampilan');
-    }
 
     const imageFile = new File([blob], safeFilename, { type: 'image/png' });
 
-    // 2. Cek apakah perangkat mendukung Web Share API dengan File
-    // Didukung di Android Chrome, iOS Safari, dll. Ini akan membuka WhatsApp dengan GAMBAR terlampir!
+    // 2. Gunakan Web Share API HANYA dengan files: [imageFile] (TANPA title & TANPA text/caption)
+    // sehingga yang terkirim di WhatsApp murni hanya gambar struk/invoice saja tanpa chat tambahan.
     const canShareFiles =
       typeof navigator !== 'undefined' &&
       typeof navigator.canShare === 'function' &&
@@ -82,32 +199,29 @@ export async function shareImageToWhatsApp(
       navigator.canShare({ files: [imageFile] });
 
     if (canShareFiles) {
-      onProgress?.('Membuka aplikasi WhatsApp...');
+      onProgress?.('Membuka WhatsApp...');
       try {
         await navigator.share({
           files: [imageFile],
-          title: title || 'Faktur / Struk Mitra',
-          text: caption,
         });
 
         return {
           success: true,
           method: 'web-share',
-          message: 'Berhasil dibagikan ke WhatsApp',
+          message: 'Gambar berhasil dibagikan',
         };
       } catch (shareErr: any) {
-        // Jika user membatalkan sheet bawaan OS, keluar dengan aman
         if (shareErr?.name === 'AbortError') {
           return { success: false, method: 'web-share', message: 'Dibatalkan' };
         }
-        console.warn('Web Share dibatalkan atau gagal, beralih ke deep link:', shareErr);
+        console.warn('Web Share gagal, beralih ke metode unduh gambar:', shareErr);
       }
     }
 
-    // 3. Fallback: Jika Web Share file tidak didukung (misal browser desktop)
-    onProgress?.('Menyimpan gambar ke perangkat...');
+    // 3. Fallback jika perangkat tidak mendukung Web Share file (misal browser PC):
+    // Salin gambar ke clipboard & unduh gambar, lalu buka WhatsApp tanpa teks chat
+    onProgress?.('Menyimpan gambar...');
 
-    // a) Salin gambar ke clipboard jika browser mengizinkan
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
       try {
         await navigator.clipboard.write([
@@ -118,7 +232,6 @@ export async function shareImageToWhatsApp(
       }
     }
 
-    // b) Unduh file gambar otomatis ke galeri/unduhan
     const objectUrl = URL.createObjectURL(blob);
     const downloadLink = document.createElement('a');
     downloadLink.href = objectUrl;
@@ -128,51 +241,21 @@ export async function shareImageToWhatsApp(
     document.body.removeChild(downloadLink);
     setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
 
-    // c) Buka aplikasi WhatsApp yang sedang terpasang di perangkat melalui protokol whatsapp://
-    onProgress?.('Membuka aplikasi WhatsApp...');
-    const encodedText = encodeURIComponent(caption);
-    const waDeepLink = cleanPhone
-      ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
-      : `whatsapp://send?text=${encodedText}`;
-
-    const waWebFallback = cleanPhone
-      ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`
-      : `https://api.whatsapp.com/send?text=${encodedText}`;
-
-    // Jalankan deep link langsung ke APK WhatsApp
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    if (isMobile) {
-      window.location.href = waDeepLink;
-      // Fallback ke web jika aplikasi tidak merespon dalam 1.5 detik
-      setTimeout(() => {
-        window.open(waWebFallback, '_blank');
-      }, 1500);
-    } else {
-      // Desktop: Buka deep link whatsapp:// (untuk WA Desktop) dengan fallback WA Web
-      window.open(waDeepLink, '_self');
-      setTimeout(() => {
-        window.open(waWebFallback, '_blank');
-      }, 1500);
+    if (cleanPhone) {
+      onProgress?.('Membuka WhatsApp...');
+      window.location.href = `whatsapp://send?phone=${cleanPhone}`;
     }
 
     return {
       success: true,
-      method: 'app-scheme',
-      message: 'Gambar tersimpan & aplikasi WhatsApp dibuka',
+      method: 'download',
+      message: 'Gambar tersimpan (siap dikirim)',
     };
   } catch (error: any) {
-    console.error('Error saat share ke WhatsApp:', error);
-    // Fallback paling dasar jika render gambar error
-    const encodedText = encodeURIComponent(caption);
-    const cleanPhone = formatWhatsAppPhone(phone);
-    const fallbackUrl = cleanPhone
-      ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
-      : `whatsapp://send?text=${encodedText}`;
-    window.location.href = fallbackUrl;
-
+    console.error('Error saat share gambar ke WhatsApp:', error);
     return {
       success: false,
-      method: 'web-link',
+      method: 'download',
       message: error?.message || 'Gagal membuat gambar',
     };
   }

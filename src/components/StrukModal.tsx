@@ -9,11 +9,13 @@ import {
   Check,
   Loader2,
 } from 'lucide-react';
-import { toPng } from 'html-to-image';
 import { useApp } from '../context/AppContext';
 import { Transaction } from '../types';
 import { formatRupiahRp, formatTanggal } from '../utils/formatters';
-import { shareImageToWhatsApp } from '../utils/whatsappShare';
+import {
+  shareImageToWhatsApp,
+  captureElementAsPngDataUrl,
+} from '../utils/whatsappShare';
 
 interface StrukModalProps {
   isOpen: boolean;
@@ -64,10 +66,9 @@ export const StrukModal: React.FC<StrukModalProps> = ({
     if (!strukRef.current) return;
     setIsDownloading(true);
     try {
-      const dataUrl = await toPng(strukRef.current, {
-        cacheBust: true,
-        quality: 0.98,
+      const dataUrl = await captureElementAsPngDataUrl(strukRef.current, {
         backgroundColor: '#ffffff',
+        targetWidth: 380,
       });
       const link = document.createElement('a');
       link.download = `Struk_${strukNumber}_${transaction.nama}.png`;
@@ -132,9 +133,8 @@ export const StrukModal: React.FC<StrukModalProps> = ({
         element: strukRef.current,
         filename: `Struk_${strukNumber}_${transaction.nama}`,
         phone: phoneTarget,
-        caption: getStrukPlainText(),
-        title: `Struk Transaksi ${profile.namaMitra} - ${transaction.nama}`,
         backgroundColor: '#ffffff',
+        targetWidth: 380,
         onProgress: (status) => setShareStatusMsg(status),
       });
     } catch (err) {
@@ -240,18 +240,18 @@ export const StrukModal: React.FC<StrukModalProps> = ({
                 <span>TRANSAKSI</span>
                 <span>TOTAL</span>
               </div>
-              <div className="flex justify-between font-bold text-slate-900 text-xs">
-                <span>{transaction.jenisTransaksi}</span>
-                <span>{formatRupiahRp(transaction.bayar)}</span>
+              <div className="flex justify-between gap-2 font-bold text-slate-900 text-xs">
+                <span className="break-words">{transaction.jenisTransaksi}</span>
+                <span className="whitespace-nowrap shrink-0">{formatRupiahRp(transaction.bayar)}</span>
               </div>
               <div className="text-[10px] text-slate-500">
                 1 x {formatRupiahRp(transaction.bayar)}
               </div>
 
               {showAdminFee && (
-                <div className="flex justify-between text-[11px] text-slate-700 pt-1">
+                <div className="flex justify-between gap-2 text-[11px] text-slate-700 pt-1">
                   <span>Biaya Admin</span>
-                  <span>{formatRupiahRp(adminFee)}</span>
+                  <span className="whitespace-nowrap shrink-0">{formatRupiahRp(adminFee)}</span>
                 </div>
               )}
             </div>
@@ -261,9 +261,9 @@ export const StrukModal: React.FC<StrukModalProps> = ({
 
             {/* Total and Status */}
             <div className="space-y-1.5 text-[11px]">
-              <div className="flex justify-between items-center">
-                <span className="font-black text-slate-900">TOTAL BAYAR:</span>
-                <span className="font-black text-sm text-slate-900">
+              <div className="flex justify-between items-center gap-2">
+                <span className="font-black text-slate-900 shrink-0">TOTAL BAYAR:</span>
+                <span className="font-black text-sm text-slate-900 whitespace-nowrap shrink-0">
                   {formatRupiahRp(totalAmount)}
                 </span>
               </div>
