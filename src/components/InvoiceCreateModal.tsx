@@ -14,6 +14,10 @@ import { useApp } from '../context/AppContext';
 import { InvoiceItem, Invoice } from '../types';
 import { terbilangRupiah, formatRupiah } from '../utils/formatters';
 
+interface InvoiceItemWithManual extends InvoiceItem {
+  isManual?: boolean;
+}
+
 interface InvoiceCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -47,7 +51,7 @@ export const InvoiceCreateModal: React.FC<InvoiceCreateModalProps> = ({
   const [catatan, setCatatan] = useState('');
   const [status, setStatus] = useState<'Belum' | 'Lunas'>('Belum');
 
-  const [items, setItems] = useState<InvoiceItem[]>([
+  const [items, setItems] = useState<InvoiceItemWithManual[]>([
     {
       id: `item_${Date.now()}`,
       jenisTransaksi: 'Briva',
@@ -470,33 +474,66 @@ export const InvoiceCreateModal: React.FC<InvoiceCreateModalProps> = ({
             <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
               {items.map((item, idx) => (
                 <div key={item.id} className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <select
-                      value={
-                        allServiceTypes.includes(item.jenisTransaksi)
-                          ? item.jenisTransaksi
-                          : 'Custom'
-                      }
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val !== 'Custom') {
-                          handleItemChange(idx, 'jenisTransaksi', val);
-                        }
-                      }}
-                      className="w-full bg-[#0A0E1A] border border-[#222D47] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#6366F1] appearance-none"
-                    >
-                      {allServiceTypes.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                      {!allServiceTypes.includes(item.jenisTransaksi) && (
-                        <option value="Custom">{item.jenisTransaksi}</option>
-                      )}
-                    </select>
-                    <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-                      ▾
-                    </div>
+                  <div className="flex-1">
+                    {item.isManual ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={item.jenisTransaksi}
+                          onChange={(e) => handleItemChange(idx, 'jenisTransaksi', e.target.value)}
+                          placeholder="Ketik jenis transaksi..."
+                          className="w-full bg-[#0A0E1A] border border-[#6366F1] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#6366F1] font-semibold"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setItems((prev) => {
+                              const updated = [...prev];
+                              updated[idx] = { ...updated[idx], isManual: false, jenisTransaksi: allServiceTypes[0] || 'Briva' };
+                              return updated;
+                            });
+                          }}
+                          className="px-2 py-2 rounded-xl bg-[#1E2548] hover:bg-[#283262] text-[#A5B4FC] text-[11px] font-bold shrink-0 cursor-pointer"
+                          title="Pilih dari daftar"
+                        >
+                          List
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <select
+                          value={allServiceTypes.includes(item.jenisTransaksi) ? item.jenisTransaksi : '__manual__'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '__manual__') {
+                              setItems((prev) => {
+                                const updated = [...prev];
+                                updated[idx] = { ...updated[idx], isManual: true, jenisTransaksi: '' };
+                                return updated;
+                              });
+                            } else {
+                              handleItemChange(idx, 'jenisTransaksi', val);
+                            }
+                          }}
+                          className="w-full bg-[#0A0E1A] border border-[#222D47] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#6366F1] appearance-none cursor-pointer"
+                        >
+                          <option value="" disabled>
+                            -- Pilih Jenis Transaksi --
+                          </option>
+                          <option value="__manual__">✍️ Ketik Manual...</option>
+                          {allServiceTypes.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
+                          ▾
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <div className="w-16">
